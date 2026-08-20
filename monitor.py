@@ -131,17 +131,99 @@ def fetch_reddit_alerts(cursor):
         
     return count
 
-# --- 6. EXECUTION ---
+def fetch_gdacs_alerts(cursor):
+    """
+    Fetches real-time meteorological and seismic alerts from the GDACS API
+    and saves them alongside the news and social media alerts.
+    """
+    print("\n Sourcing: GDACS Cyclone & Earthquake Tracker...")
+    
+    # GDACS GeoJSON API for active events (Meteorological and Earthquakes)
+    gdacs_url = "https://www.gdacs.org/gdacsapi/api/events/geteventlist/SEARCH"
+    
+    try:
+        response = requests.get(gdacs_url, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            features = data.get("features", [])
+            count = 0
+            
+            for event in features:
+                props = event.get("properties", {})
+                geometry = event.get("geometry", {})
+                
+                event_type = props.get("eventtype")
+                
+                # Only process Tropical Cyclones (TC) and Earthquakes (EQ) for the EWS
+                if event_type not in ["TC", "EQ"]:
+                    continue
+                    
+                # Extract properties
+                event_id = props.get("eventid")
+                name = props.get("name", "Unnamed Event")
+                desc = props.get("description", "")
+                country = props.get("country", "Oceanic/Unknown")
+                date = props.get("fromdate", "")
+                url = props.get("url", {}).get("details", "")
+                alert_level = props.get("alertlevel", "Green")
+                
+                # Map GDACS Alert Levels (Red/Orange/Green) to our Severity scale
+                severity_map = {"Red": "Critical", "Orange": "Warning", "Green": "Info"}
+                severity = severity_map.get(alert_level, "Info")
+                
+                title = f"[{event_type}] {name} - {desc}"
+                location_name = f"{country} (GDACS Tracker)"
+                
+                # Check for duplicates using the title
+                cursor.execute("SELECT id FROM alerts WHERE title = ?", (title,))
+                if cursor.fetchone():
+                    continue
+                
+                # Extract coordinates (GeoJSON uses [Longitude, Latitude])
+                coords = geometry.get("coordinates", [])
+                if coords and len(coords) >= 2:
+                    lon, lat = coords[0], coords[1]
+                    
+                    # We only care about events near the Indian Subcontinent
+                    # Rough bounding box for Indian Ocean / Bay of Bengal / Arabian Sea
+                    if (0 <= lat <= 35) and (50 <= lon <= 100):
+                        save_alert(
+                            cursor=cursor,
+                            platform="GDACS EWS",
+                            title=title,
+                            published=date,
+                            url=url,
+                            location=location_name,
+                            lat=lat,
+                            lon=lon
+                        )
+                        count += 1
+            return count
+        else:
+            print(f" GDACS API returned status {response.status_code}")
+    except Exception as e:
+        print(f" GDACS fetch error: {e}")
+    
+    return 0
+
+
 if __name__ == "__main__":
     setup_database()
     
     conn = sqlite3.connect(DB_NAME)
-    cur = conn.cursor() 
+    cur = conn.cursor()
+    
+    gdacs_count = fetch_gdacs_alerts(cur)
     
     news_count = fetch_google_news(cur)
+    
+    
     reddit_count = fetch_reddit_alerts(cur)
     
     conn.commit()
     conn.close()
     
-    print(f"\n Pipeline Finished: {news_count} news alerts and {reddit_count} Reddit posts stored.")
+    print(f"\n Pipeline Finished!")
+    print(f"    {gdacs_count} Official Disaster EWS Alerts stored.")
+    print(f"    {news_count} News Articles stored.")
+    print(f"    {reddit_count} Reddit Posts stored.")
