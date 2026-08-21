@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ocean Monitoring & EWS Dashboard</title>
+    
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="leaflet/dist/leaflet.css" />
+    
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        }
+        body, html {
+            height: 100%;
+            overflow: hidden;
+        }
+        #app-container {
+            display: flex;
+            height: 100vh;
+            width: 100vw;
+        }
+        
+        /* Sidebar Styles */
+        #sidebar {
+            width: 380px;
+            background: #ffffff;
+            border-right: 1px solid #e0e0e0;
+            display: flex;
+            flex-direction: column;
+            z-index: 1000;
+            box-shadow: 2px 0 8px rgba(0,0,0,0.05);
+        }
+        .header {
+            padding: 16px;
+            background: #0f172a;
+            color: #ffffff;
+        }
+        .header h1 {
+            font-size: 1.1rem;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .status-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-top: 10px;
+            font-size: 0.8rem;
+            color: #94a3b8;
+        }
+        .status-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 2px 8px;
+            border-radius: 12px;
+            background: #1e293b;
+            color: #38bdf8;
+            font-weight: 600;
+        }
+        .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #22c55e;
+        }
+        .dot.offline { background: #ef4444; }
+        
+        /* Alert Feed */
+        #alert-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            background: #f8fafc;
+        }
+        .alert-card {
+            background: #ffffff;
+            border-radius: 8px;
+            padding: 12px;
+            border-left: 4px solid #94a3b8;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+            cursor: pointer;
+            transition: transform 0.15s ease, box-shadow 0.15s ease;
+        }
+        .alert-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 6px rgba(0,0,0,0.08);
+        }
+        .alert-card.critical { border-left-color: #ef4444; }
+        .alert-card.warning { border-left-color: #f97316; }
+        .alert-card.info { border-left-color: #3b82f6; }
+        
+        .card-meta {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.75rem;
+            color: #64748b;
+            margin-bottom: 4px;
+        }
+        .card-title {
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: #1e293b;
+            line-height: 1.3;
+            margin-bottom: 6px;
+        }
+        .card-location {
+            font-size: 0.75rem;
+            color: #0284c7;
+            font-weight: 500;
+        }
+
+        /* Map Styles */
+        #map {
+            flex: 1;
+            height: 100%;
+        }
+
+        /* Pulse animation for Critical Markers */
+        @keyframes pulse {
+            0% { transform: scale(1); opacity: 0.9; }
+            50% { transform: scale(1.3); opacity: 0.5; }
+            100% { transform: scale(1); opacity: 0.9; }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="app-container">
+        <!-- Sidebar -->
+        <aside id="sidebar">
+            <div class="header">
+                <h1>🌊 Ocean Monitor EWS</h1>
+                <div class="status-bar">
+                    <span id="connection-status" class="status-pill">
+                        <span class="dot" id="status-dot"></span> <span id="status-text">Connected</span>
+                    </span>
+                    <span id="alert-counter">0 Active Alerts</span>
+                </div>
+            </div>
+            
+            <div id="alert-list">
+                <div style="text-align: center; color: #64748b; font-size: 0.85rem; padding: 20px;">
+                    Connecting to server & loading alerts...
+                </div>
+            </div>
+        </aside>
+
+        <!-- Map Container -->
+        <main id="map"></main>
+    </div>
+
+    <!-- Leaflet JS -->
+    <script src="leaflet/dist/leaflet.js"></script>
+
+    <script>
+        // 1. Define the invisible boundaries (Bottom-Left corner, Top-Right corner)
+// These coordinates tightly box the Indian Ocean, Bay of Bengal, and Arabian Sea
+const southWest = L.latLng(-5.790897,51.855469);  // Deep Indian Ocean / Coast of Africa
+const northEast = L.latLng(38.685510,110.742188); // Himalayas / Myanmar border
+const indiaBounds = L.latLngBounds(southWest, northEast);
+
+// Initialize Map with locking constraints
+const map = L.map('map', {
+    zoomControl: true,
+    minZoom: 5,             // Prevent zooming out to see the whole globe
+    maxZoom: 100,              // Allow zooming in really close
+    maxBounds: indiaBounds,   // Lock the panning to our rectangle
+    maxBoundsViscosity: 0.5   // 1.0 means a solid wall (0.0 would let it bounce)
+}).setView([22.309426,78.618164], 7);
+
+/*L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 18,
+    attribution: '© OpenStreetMap | Ocean EWS'
+}).addTo(map);
+*/
+// Replacing the standard OpenStreetMap layer with this Dark Matter layer
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    maxZoom: 18,
+    attribution: '© OpenStreetMap | © CARTO'
+}).addTo(map);
+
+        // 2. Layer Group to manage markers without memory leaks
+        const markerLayer = L.layerGroup().addTo(map);
+        const markersMap = new Map(); // Stores marker references by ID
+
+        // 3. UI Helpers
+        const statusDot = document.getElementById('status-dot');
+        const statusText = document.getElementById('status-text');
+        const alertCounter = document.getElementById('alert-counter');
+        const alertList = document.getElementById('alert-list');
+
+        function setStatus(online, message) {
+            if (online) {
+                statusDot.classList.remove('offline');
+                statusText.innerText = message || "Connected";
+            } else {
+                statusDot.classList.add('offline');
+                statusText.innerText = message || "Disconnected";
+            }
+        }
+
+        function getColor(severity) {
+            switch ((severity || '').toLowerCase()) {
+                case 'critical': return '#ef4444';
+                case 'warning': return '#f97316';
+                default: return '#3b82f6';
+            }
+        }
+
+        // 4. Fetch and Render Pipeline
+        async function updateDashboard() {
+            try {
+                const response = await fetch('http://127.0.0.1:5000/api/alerts');
+                if (!response.ok) throw new Error(`HTTP error ${response.status}`);
+                
+                const payload = await response.json();
+                const alerts = payload.data || [];
+                
+                setStatus(true, "Live");
+                alertCounter.innerText = `${alerts.length} Active Alerts`;
+
+                // Wipe old markers cleanly
+                markerLayer.clearLayers();
+                markersMap.clear();
+
+                if (alerts.length === 0) {
+                    alertList.innerHTML = `
+                        <div style="text-align: center; color: #64748b; font-size: 0.85rem; padding: 20px;">
+                            No alerts currently detected in database.
+                        </div>`;
+                    return;
+                }
+
+                alertList.innerHTML = '';
+
+                // Render Markers & Sidebar Items
+                alerts.forEach(alert => {
+                    const lat = parseFloat(alert.latitude);
+                    const lon = parseFloat(alert.longitude);
+
+                    // Skip any corrupted coordinate entries safely
+                    if (isNaN(lat) || isNaN(lon)) return;
+
+                    const sevClass = (alert.severity || 'info').toLowerCase();
+                    const color = getColor(alert.severity);
+
+                    // Create Leaflet Marker
+                    const marker = L.circleMarker([lat, lon], {
+                        radius: alert.severity === 'Critical' ? 10 : 7,
+                        fillColor: color,
+                        color: '#ffffff',
+                        weight: 2,
+                        opacity: 1,
+                        fillOpacity: 0.85
+                    });
+
+                    // Build Popup Content
+                    const popupContent = `
+                        <div style="font-family: inherit; font-size: 13px; max-width: 240px;">
+                            <span style="color: #64748b; font-size: 11px; text-transform: uppercase; font-weight: 700;">
+                                ${alert.source_platform || 'Alert'}
+                            </span>
+                            <h4 style="margin: 4px 0; color: ${color};">${alert.location_name || 'Ocean Location'}</h4>
+                            <p style="margin: 6px 0; line-height: 1.3;">${alert.title || ''}</p>
+                            ${alert.source_url ? `<a href="${alert.source_url}" target="_blank" style="color: #0284c7; text-decoration: none; font-weight: 600; font-size: 11px;">View Source ↗</a>` : ''}
+                        </div>
+                    `;
+                    marker.bindPopup(popupContent);
+                    markerLayer.addLayer(marker);
+
+                    // Store marker by id for click-to-focus
+                    markersMap.set(alert.id, marker);
+
+                    // Create Sidebar Card
+                    const card = document.createElement('div');
+                    card.className = `alert-card ${sevClass}`;
+                    card.innerHTML = `
+                        <div class="card-meta">
+                            <span>${alert.source_platform}</span>
+                            <span style="font-weight: 700; text-transform: uppercase;">${alert.severity}</span>
+                        </div>
+                        <div class="card-title">${alert.title}</div>
+                        <div class="card-location">📍 ${alert.location_name}</div>
+                    `;
+
+                    // Click sidebar item to focus map on marker
+                    card.addEventListener('click', () => {
+                        map.flyTo([lat, lon], 8, { duration: 1.2 });
+                        marker.openPopup();
+                    });
+
+                    alertList.appendChild(card);
+                });
+
+            } catch (err) {
+                console.error("Dashboard Fetch Error:", err);
+                setStatus(false, "API Offline");
+                alertList.innerHTML = `
+                    <div style="text-align: center; color: #ef4444; font-size: 0.85rem; padding: 20px;">
+                        ⚠️ Unable to reach <code>http://127.0.0.1:5000/api/alerts</code>.<br>
+                        Make sure <code>python api.py</code> is running.
+                    </div>`;
+            }
+        }
+
+        // 5. Initial Execution & Auto-Refresh every 30 seconds
+        updateDashboard();
+        setInterval(updateDashboard, 30000);
+
+        // Fix Leaflet tile rendering on window resize
+        window.addEventListener('resize', () => map.invalidateSize());
+    </script>
+</body>
+</html>

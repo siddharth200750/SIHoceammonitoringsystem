@@ -1,0 +1,7 @@
+Flask==3.0.0
+Flask-Cors==4.0.0
+feedparser==6.0.10
+geopy==2.4.1
+requests==2.31.0
+spacy==3.7.2
+pyinstaller==6.3.0
