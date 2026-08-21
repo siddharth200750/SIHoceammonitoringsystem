@@ -19,7 +19,7 @@ Requirements:
 Installation:
 - install pip 
 - (optional) create a py venv to keep it simple 
-- run this command in cmd in this folder: <br> 
+- run this command in cmd in the folder: <br> 
 pip install -r requirements.txt
 - also install spacy nlp by : <br>
 python -m spacy download en_core_web_sm
